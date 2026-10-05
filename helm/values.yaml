@@ -4,7 +4,7 @@ replicaCount: 1
 
 image:
   repository: git.ebaillon.fr/infra/honeypot-sql
-  tag: "0.1.1"
+  tag: "0.1.2"
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
