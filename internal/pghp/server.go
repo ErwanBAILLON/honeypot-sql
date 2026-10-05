@@ -73,12 +73,13 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 	if db == "" {
 		db = user
 	}
-	info := map[string]any{"startup_params": st.Params}
+	params := hpcore.TrimMap(st.Params)
+	info := map[string]any{"startup_params": params}
 	if v := st.Params["application_name"]; v != "" {
 		info["application_name"] = v
 	}
 	c.ClientInfo(info)
-	c.Event("startup", map[string]any{"params": st.Params})
+	c.Event("startup", map[string]any{"params": params})
 
 	var salt [4]byte
 	_, _ = rand.Read(salt[:])

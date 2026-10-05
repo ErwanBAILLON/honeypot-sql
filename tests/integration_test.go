@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -358,4 +359,132 @@ func asPgErr(err error, target **pgconn.PgError) bool {
 		err = u.Unwrap()
 	}
 	return false
+}
+
+// TestMySQLOversizedAuthBlobBounded replays the storage-amplification attack:
+// a HandshakeResponse41 whose lenenc auth response is 900 KB. Before the fix
+// one such connection persisted ~5.4 MB (hex in three places). Everything
+// stored for the session must now stay in the KB range.
+func TestMySQLOversizedAuthBlobBounded(t *testing.T) {
+	e := start(t, &mysqlhp.Server{Version: "8.0.36"}, &pghp.Server{})
+	c, err := net.DialTimeout("tcp", e.mysqlAddr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, _, err := mysqlhp.ReadPacket(c, 1<<20); err != nil {
+		t.Fatalf("greeting: %v", err)
+	}
+	const capProtocol41, capSecure, capLenenc, capAttrs = 0x00000200, 0x00008000, 0x00200000, 0x00100000
+	caps := uint32(capProtocol41 | capSecure | capLenenc | capAttrs)
+	p := make([]byte, 0, 1<<20)
+	p = append(p, byte(caps), byte(caps>>8), byte(caps>>16), byte(caps>>24))
+	p = append(p, 0, 0, 0xff, 0) // max packet size
+	p = append(p, 0xff)          // charset
+	p = append(p, make([]byte, 23)...)
+	p = append(p, "root"...)
+	p = append(p, 0)
+	blob := bytes.Repeat([]byte{0xab}, 900_000)
+	p = append(p, 0xfd, byte(len(blob)), byte(len(blob)>>8), byte(len(blob)>>16)) // lenenc 3 bytes
+	p = append(p, blob...)
+	// connect attrs: 40 keys with 2 KB values (whole packet stays under MaxPacket)
+	var attrs []byte
+	for i := 0; i < 40; i++ {
+		k := fmt.Sprintf("attr%03d", i)
+		v := strings.Repeat("A", 2000)
+		attrs = append(attrs, byte(len(k)))
+		attrs = append(attrs, k...)
+		attrs = append(attrs, 0xfc, byte(len(v)), byte(len(v)>>8))
+		attrs = append(attrs, v...)
+	}
+	p = append(p, 0xfd, byte(len(attrs)), byte(len(attrs)>>8), byte(len(attrs)>>16))
+	p = append(p, attrs...)
+	if err := mysqlhp.WritePacket(c, 1, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := mysqlhp.ReadPacket(c, 1<<20); err != nil || len(ok) == 0 || ok[0] != 0 {
+		t.Fatalf("expected OK after auth, got %x err=%v", ok, err)
+	}
+	c.Close()
+	sess := e.waitSession(t, "mysql")
+	s, events, err := e.st.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, ev := range events {
+		b, _ := json.Marshal(ev.Payload)
+		total += len(b)
+		if len(b) > hpcore.EventMaxJSON {
+			t.Fatalf("event %s payload %d bytes", ev.Kind, len(b))
+		}
+	}
+	ci, _ := json.Marshal(s.ClientInfo)
+	if len(ci) > hpcore.ClientInfoMax {
+		t.Fatalf("client_info %d bytes", len(ci))
+	}
+	if total+len(ci) > 64<<10 {
+		t.Fatalf("session persisted %d bytes for a 900 KB blob", total+len(ci))
+	}
+	if s.BytesIn < 900_000 {
+		t.Fatalf("bytes_in = %d, blob not actually read", s.BytesIn)
+	}
+	if !strings.Contains(string(ci), "len=900000") {
+		t.Fatalf("auth blob summary missing: %s", ci[:min(len(ci), 400)])
+	}
+	t.Logf("persisted %d bytes (events) + %d bytes (client_info) for bytes_in=%d", total, len(ci), s.BytesIn)
+}
+
+// TestPostgresOversizedStartupBounded: the startup message is already capped
+// at 10 KB by the decoder; this checks the params are still trimmed per entry.
+func TestPostgresOversizedStartupBounded(t *testing.T) {
+	e := start(t, &mysqlhp.Server{}, &pghp.Server{})
+	c, err := net.DialTimeout("tcp", e.pgAddr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	body := []byte{0, 3, 0, 0}
+	body = append(body, "user\x00postgres\x00"...)
+	for i := 0; i < 9; i++ {
+		body = append(body, fmt.Sprintf("p%02d\x00%s\x00", i, strings.Repeat("Z", 1000))...)
+	}
+	body = append(body, 0)
+	n := uint32(len(body) + 4)
+	msg := []byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+	msg = append(msg, body...)
+	if _, err := c.Write(msg); err != nil {
+		t.Fatal(err)
+	}
+	hdr := make([]byte, 5)
+	if _, err := io.ReadFull(c, hdr); err != nil || hdr[0] != 'R' {
+		t.Fatalf("expected auth request, got %q err=%v", hdr, err)
+	}
+	c.Close()
+	sess := e.waitSession(t, "postgres")
+	s, events, _ := e.st.GetSession(context.Background(), sess.ID)
+	ci, _ := json.Marshal(s.ClientInfo)
+	if len(ci) > hpcore.ClientInfoMax {
+		t.Fatalf("client_info %d bytes", len(ci))
+	}
+	for _, ev := range events {
+		if b, _ := json.Marshal(ev.Payload); len(b) > hpcore.EventMaxJSON {
+			t.Fatalf("event %s payload %d bytes", ev.Kind, len(b))
+		}
+	}
+	params, _ := s.ClientInfo["startup_params"].(map[string]string)
+	if params == nil {
+		// after a store round-trip the map may be map[string]any
+		if m, ok := s.ClientInfo["startup_params"].(map[string]any); ok {
+			params = map[string]string{}
+			for k, v := range m {
+				params[k], _ = v.(string)
+			}
+		}
+	}
+	if len(params["p00"]) != hpcore.MapMaxLen {
+		t.Fatalf("startup param not trimmed: len=%d", len(params["p00"]))
+	}
 }

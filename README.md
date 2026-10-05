@@ -16,6 +16,7 @@ Single static Go binary, no CGO, runs as non-root on distroless.
 | PostgreSQL startup v3, `SSLRequest` answered `N`, cleartext or md5 password, simple **and** extended query protocol (Parse/Bind/Execute, what pgx, psycopg, JDBC use) | Open outbound connections (NetworkPolicy: DNS + the state database only) |
 | Records user, database, password as sent (MySQL: plaintext when it matches a honeytoken or a common password, otherwise the SHA1 scramble), client capabilities, `application_name`, every query with timing, bytes in/out | Keep state on the attacker's behalf, run prepared statements, speak TLS |
 | Per-read timeout 30 s, session cap 10 min, 200 queries, 1 MiB packets, 500 concurrent connections per listener (extra connections are closed at accept) | Retaliate. Decisions are made by CrowdSec from the log line, nothing else |
+| Bounded storage: client blobs (auth response, bad handshake, connect attrs, startup params) are kept up to 256 bytes verbatim plus length and sha256; any event payload over 16 KiB or client_info over 32 KiB is replaced by a summary. A 1 MiB packet costs a few KB in the database, never megabytes | Persist what the client sent as is |
 
 Threat model: an unauthenticated network attacker. The process has no secrets
 other than its own database URL and dashboard password, no shell, no writable

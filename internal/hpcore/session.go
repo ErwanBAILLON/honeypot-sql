@@ -93,7 +93,7 @@ func (s *Session) ReadFull(p []byte) error {
 
 // Event records a session event (DB + nothing else).
 func (s *Session) Event(kind string, payload map[string]any) {
-	e := &store.Event{SessionID: s.Rec.ID, TS: time.Now(), Kind: kind, Payload: payload}
+	e := &store.Event{SessionID: s.Rec.ID, TS: time.Now(), Kind: kind, Payload: BoundPayload(payload, EventMaxJSON)}
 	// Own budget: the session ctx may already be expired (timeout) when the
 	// disconnect event is written.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -124,6 +124,7 @@ func (s *Session) Credentials(user, database, password string, extra map[string]
 	for k, v := range extra {
 		s.Rec.ClientInfo[k] = v
 	}
+	s.Rec.ClientInfo = BoundPayload(s.Rec.ClientInfo, ClientInfoMax)
 	hplog.Auth.Inc(s.Rec.Proto)
 	if err := s.Store.UpdateSession(s.ctx, &s.Rec); err != nil {
 		log.Printf("store: update session: %v", err)
@@ -148,6 +149,7 @@ func (s *Session) ClientInfo(kv map[string]any) {
 	for k, v := range kv {
 		s.Rec.ClientInfo[k] = v
 	}
+	s.Rec.ClientInfo = BoundPayload(s.Rec.ClientInfo, ClientInfoMax)
 }
 
 func trim(s string, n int) string {

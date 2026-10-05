@@ -51,7 +51,7 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 	}
 	resp, err := DecodeHandshakeResponse(payload)
 	if err != nil {
-		c.Event("error", map[string]any{"stage": "handshake_response", "err": err.Error(), "raw": hexBytes(payload)})
+		c.Event("error", map[string]any{"stage": "handshake_response", "err": err.Error(), "raw": hpcore.BlobHex(payload)})
 		_ = WritePacket(c, seq+1, ErrPacket(1043, "08S01", "Bad handshake"))
 		return
 	}
@@ -68,15 +68,15 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 		return
 	}
 	if len(resp.Attrs) > 0 {
-		info["connect_attrs"] = resp.Attrs
+		info["connect_attrs"] = hpcore.TrimMap(resp.Attrs)
 	}
 	info["auth_plugin"] = resp.AuthPlugin
 	c.ClientInfo(info)
-	c.Event("handshake", map[string]any{"username": resp.Username, "database": resp.Database, "auth_plugin": resp.AuthPlugin, "auth_response": hexBytes(resp.AuthResponse)})
+	c.Event("handshake", map[string]any{"username": resp.Username, "database": resp.Database, "auth_plugin": resp.AuthPlugin, "auth_response": hpcore.BlobHex(resp.AuthResponse)})
 
 	authResp := resp.AuthResponse
 	if !resp.Protocol41 {
-		c.Credentials(resp.Username, resp.Database, "", map[string]any{"auth_response_hex": hexBytes(authResp), "auth_plugin": "mysql_old_password"})
+		c.Credentials(resp.Username, resp.Database, "", map[string]any{"auth_response_hex": hpcore.BlobHex(authResp), "auth_plugin": "mysql_old_password"})
 		_ = WritePacket(c, seq+1, ErrPacket(1251, "08004", "Client does not support authentication protocol requested by server; consider upgrading MySQL client"))
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 		var p []byte
 		seq, p, err = ReadPacket(c, c.Limits.MaxPacket)
 		if err != nil {
-			c.Credentials(resp.Username, resp.Database, "", map[string]any{"auth_response_hex": hexBytes(authResp), "auth_switch": "no_reply"})
+			c.Credentials(resp.Username, resp.Database, "", map[string]any{"auth_response_hex": hpcore.BlobHex(authResp), "auth_switch": "no_reply"})
 			return
 		}
 		authResp = p
@@ -97,7 +97,7 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 
 	// Find the plaintext password when it is a known honeytoken, or the empty password.
 	password, matched := s.matchPassword(authResp, salt)
-	extra := map[string]any{"auth_response_hex": hexBytes(authResp), "password_matched": matched}
+	extra := map[string]any{"auth_response_hex": hpcore.BlobHex(authResp), "password_matched": matched}
 	if matched && password == "" {
 		extra["empty_password"] = true
 	}
@@ -137,7 +137,7 @@ func (s *Server) matchPassword(authResp []byte, salt [20]byte) (string, bool) {
 			return p, len(s.Passwords) == 0
 		}
 	}
-	return "<sha1:" + hexBytes(authResp) + ">", false
+	return "<sha1:" + hpcore.BlobHex(authResp) + ">", false
 }
 
 var commonPasswords = []string{"root", "password", "123456", "mysql", "admin", "toor", "test", "12345678", "1234", "root123",
