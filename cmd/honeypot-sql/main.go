@@ -18,11 +18,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"git.ebaillon.fr/infra/honeypot-sql/internal/hpcore"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/mysqlhp"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/pghp"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/store"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/web"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/mysqlhp"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/pghp"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/store"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/web"
 )
 
 func env(key, def string) string {

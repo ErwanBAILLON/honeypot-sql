@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"git.ebaillon.fr/infra/honeypot-sql/internal/fakedb"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/hpcore"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/fakedb"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
 )
 
 // Server is the PostgreSQL protocol handler.

@@ -1,4 +1,4 @@
-module git.ebaillon.fr/infra/honeypot-sql
+module github.com/ErwanBAILLON/honeypot-sql
 
 go 1.26.0
 

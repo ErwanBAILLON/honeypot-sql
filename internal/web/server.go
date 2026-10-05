@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"git.ebaillon.fr/infra/honeypot-sql/internal/hplog"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/store"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/hplog"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/store"
 )
 
 //go:embed templates/*.html

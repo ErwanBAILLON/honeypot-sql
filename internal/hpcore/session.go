@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.ebaillon.fr/infra/honeypot-sql/internal/hplog"
-	"git.ebaillon.fr/infra/honeypot-sql/internal/store"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/hplog"
+	"github.com/ErwanBAILLON/honeypot-sql/internal/store"
 )
 
 // Limits bound what one client can do. Zero values are replaced by defaults.

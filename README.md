@@ -1,5 +1,7 @@
 # honeypot-sql
 
+MIT licensed. Public home: <https://github.com/ErwanBAILLON/honeypot-sql> (mirror; development happens on a self-hosted Gitea whose CI builds and deploys the image). The `helm/` chart and `.gitea/` workflow are the author's homelab deployment, kept as a worked example.
+
 A low-interaction database honeypot. It speaks enough of the **MySQL** (3306)
 and **PostgreSQL** (5432) wire protocols to complete the handshake, accepts any
 credentials (or only a honeytoken list), records everything the client does,
