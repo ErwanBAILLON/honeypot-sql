@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>honeypot-sql · session {{.S.ID}}</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#262a33;--fg:#d6d9e0;--muted:#8a90a0;--accent:#f0a933;--bad:#e5534b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{display:flex;gap:24px;align-items:baseline;padding:14px 20px;border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:16px;color:var(--accent)}a{color:var(--fg)}a:hover{color:var(--accent)}
+main{padding:16px 20px;display:grid;gap:16px}section{background:var(--panel);border:1px solid var(--line);padding:10px 12px;overflow:auto}
+h2{margin:0 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px 4px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:normal;white-space:nowrap}.pw{color:var(--bad)}pre{margin:0;white-space:pre-wrap;word-break:break-all;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1><a href="/">honeypot-sql</a> / session {{.S.ID}}</h1><span>{{.S.Proto}} · {{.S.RemoteIP}}:{{.S.RemotePort}}</span></header>
+<main>
+  <section>
+    <h2>Session</h2>
+    <table>
+      <tr><th>début</th><td>{{fmtTime .S.StartedAt}}</td></tr>
+      <tr><th>fin</th><td>{{if .S.EndedAt}}{{fmtTime .S.EndedAt}} ({{dur .S}}){{else}}en cours{{end}}</td></tr>
+      <tr><th>utilisateur</th><td>{{.S.Username}}</td></tr>
+      <tr><th>base</th><td>{{.S.Database}}</td></tr>
+      <tr><th>mot de passe</th><td class="pw">{{.S.PasswordSeen}}</td></tr>
+      <tr><th>octets in / out</th><td>{{.S.BytesIn}} / {{.S.BytesOut}}</td></tr>
+      <tr><th>client</th><td><pre>{{json .S.ClientInfo}}</pre></td></tr>
+    </table>
+  </section>
+  <section>
+    <h2>Événements ({{len .Events}})</h2>
+    <table>
+      <tr><th>heure</th><th>type</th><th>détail</th></tr>
+      {{range .Events}}<tr><td>{{.TS.Local.Format "15:04:05.000"}}</td><td>{{.Kind}}</td><td><pre>{{json .Payload}}</pre></td></tr>{{end}}
+    </table>
+  </section>
+</main>
+</body>
+</html>

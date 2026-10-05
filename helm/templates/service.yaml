@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "honeypot-sql.fullname" . }}
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "honeypot-sql.selectorLabels" . | nindent 4 }}
+---
+# Honeypot listeners, reachable on the node IP (LAN). Forwarding the box's
+# 3306/5432 to these NodePorts is what exposes them to Internet scanners.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "honeypot-sql.fullname" . }}-trap
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.honeypot.type }}
+  # Keep the real client IP (the whole point of a honeypot).
+  externalTrafficPolicy: Local
+  ports:
+    - port: {{ .Values.service.honeypot.mysqlPort }}
+      targetPort: mysql
+      nodePort: {{ .Values.service.honeypot.mysqlNodePort }}
+      protocol: TCP
+      name: mysql
+    - port: {{ .Values.service.honeypot.pgPort }}
+      targetPort: postgres
+      nodePort: {{ .Values.service.honeypot.pgNodePort }}
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "honeypot-sql.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,61 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "honeypot-sql.fullname" . }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # LAN-only host (DNS -> node IP, not in the Cloudflare tunnel).
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      {{- if .Values.ingress.hardening.enabled }}
+      middlewares:
+        - name: ratelimit-public
+          namespace: network
+        - name: security-headers
+          namespace: network
+      {{- end }}
+      services:
+        - name: {{ $fullname }}
+          port: {{ .Values.service.http.port }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    certResolver: {{ .Values.ingress.certResolver }}
+    domains:
+      - main: {{ .Values.ingress.host | quote }}
+  {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}-redirect
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      middlewares:
+        - name: {{ $fullname }}-redirect-https
+      services:
+        - name: {{ $fullname }}
+          port: {{ .Values.service.http.port }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-redirect-https
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+{{- end }}

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: honeypot-sql
+description: Low-interaction MySQL + PostgreSQL honeypot feeding CrowdSec
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - honeypot
+  - mysql
+  - postgresql
+  - crowdsec
+maintainers:
+  - name: couscous
+    email: couscous@ebaillon.fr

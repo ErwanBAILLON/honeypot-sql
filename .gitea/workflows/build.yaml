@@ -1,0 +1,70 @@
+name: Build and Push Docker Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'helm/**'
+      - '*.md'
+      - '.gitignore'
+
+env:
+  REGISTRY: git.ebaillon.fr
+  IMAGE_NAME: infra/honeypot-sql
+  DOCKER_HOST: tcp://localhost:2375
+  VERSION: "0.1.${{ github.run_number }}"
+
+jobs:
+  build:
+    name: Test, Build and Push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        run: |
+          GO_VERSION=$(sed -n 's/^go \([0-9.]*\).*/\1/p' go.mod)
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
+          rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+
+      # Unit tests (protocol codecs, fake DB) + integration tests that connect
+      # with the real go-sql-driver/mysql and pgx clients against in-process
+      # listeners. go vet gates the image build.
+      - name: Vet and test
+        run: |
+          go version
+          go vet ./...
+          go test -race -count=1 ./...
+
+      - name: Install Docker CLI
+        run: |
+          curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list
+          apt-get update && apt-get install -y docker-ce-cli
+          docker version
+
+      - name: Log in to Gitea Container Registry
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+
+      - name: Build Docker image
+        run: |
+          echo "Building version: ${{ env.VERSION }}"
+          docker build --build-arg VERSION=${{ env.VERSION }} -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Update Helm image tag
+        run: |
+          sed -i "s|^  tag: .*|  tag: \"${{ env.VERSION }}\"|" helm/values.yaml
+          git config user.name "CI Bot"
+          git config user.email "ci@honeypot.ebaillon.fr"
+          git add helm/values.yaml
+          git diff --cached --quiet || git commit -m "chore: bump image tag to ${{ env.VERSION }} [skip ci]"
+          git push || echo "Push failed, tag updated in image only"

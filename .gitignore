@@ -1,0 +1,6 @@
+/honeypot-sql
+/bin/
+/dist/
+*.test
+*.out
+.env

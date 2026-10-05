@@ -1,0 +1,116 @@
+# honeypot-sql - Helm values
+
+replicaCount: 1
+
+image:
+  repository: git.ebaillon.fr/infra/honeypot-sql
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: gitea-registry-credentials
+
+nameOverride: ""
+fullnameOverride: "honeypot-sql"
+
+serviceAccount:
+  create: true
+  name: "honeypot-sql"
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop:
+      - ALL
+
+# Dashboard (ClusterIP, behind Traefik) and the two honeypot listeners
+# (NodePort on the node's LAN IP; the apiserver uses the default
+# 30000-32767 range, so 35432 is not available).
+service:
+  http:
+    port: 8080
+  honeypot:
+    type: NodePort
+    mysqlPort: 3306
+    mysqlNodePort: 30306
+    pgPort: 5432
+    pgNodePort: 30432
+
+ingress:
+  enabled: true
+  host: honeypot.ebaillon.fr
+  tls: true
+  certResolver: letsencrypt
+  # Shared middlewares from orgs/infra/traefik (cross-namespace).
+  hardening:
+    enabled: true
+
+resources:
+  limits:
+    cpu: 400m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 192Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env:
+  HONEYPOT_MYSQL_ADDR: ":3306"
+  HONEYPOT_PG_ADDR: ":5432"
+  HONEYPOT_HTTP_ADDR: ":8080"
+  HONEYPOT_MYSQL_VERSION: "8.0.36"
+  HONEYPOT_PG_VERSION: "16.3"
+  # cleartext records the password as typed; md5 only records a hash.
+  HONEYPOT_PG_AUTH: cleartext
+  HONEYPOT_MAX_CONNS: "500"
+
+# Vault entry (via ESO): DATABASE_URL, ADMIN_USER, ADMIN_PASSWORD, optional HONEYPOT_PASSWORDS.
+vault:
+  secretPath: secret/data/honeypot-sql/main
+
+livenessProbe:
+  httpGet:
+    path: /api/live
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 5
+
+startupProbe:
+  httpGet:
+    path: /api/live
+    port: http
+  failureThreshold: 30
+  periodSeconds: 5
+  timeoutSeconds: 5
+
+strategy:
+  type: Recreate
+
+networkPolicy:
+  enabled: true
