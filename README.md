@@ -94,10 +94,14 @@ curl -sO https://iptoasn.com/data/ip2asn-combined.tsv.gz   # ~5 MB, refresh when
 go run ./cmd/honeypot-sql serve ... -ip2asn ip2asn-combined.tsv.gz
 ```
 
-In the cluster, bake the file into the image at build time (the build runner
-has network; the running honeypot never does) or mount it read-only, then set
-`HONEYPOT_IP2ASN` to its path. The table is redistributable (RouteViews data,
-public domain).
+The container image already bakes this table in at `/ip2asn.tsv.gz` (the
+`Dockerfile` fetches it at build time, where the network is allowed; the
+running honeypot only reads the local file), and the Helm values default
+`HONEYPOT_IP2ASN` to it, so attribution is on out of the box. The build fetch
+is best-effort: if it fails the image still builds and attribution stays off
+until a table is provided. The data is redistributable (RouteViews data, public
+domain), which keeps the image open-source clean — unlike MaxMind GeoLite2,
+which this project deliberately avoids for its licence.
 
 ## Tarpit (keeping the attacker engaged)
 

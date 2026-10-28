@@ -84,11 +84,11 @@ env:
   # Non-zero makes each session hold its connection slot longer, so it trades
   # capacity (HONEYPOT_MAX_CONNS) for stickiness. Capped by the session max.
   HONEYPOT_TARPIT: "0"
-  # Offline country/ASN attribution from an ip2asn table (iptoasn.com, public
-  # domain). Empty = off. The file must exist in the container at this path
-  # (bake it into the image or mount it read-only); the honeypot never fetches
-  # it at runtime. See the README "Attribution" section.
-  HONEYPOT_IP2ASN: ""
+  # Offline country/ASN attribution. The image bakes in the public-domain
+  # ip2asn table (iptoasn.com) at /ip2asn.tsv.gz, fetched at build time; the
+  # honeypot only reads the local file, never the network. Set empty to turn
+  # attribution off. See the README "Attribution" section.
+  HONEYPOT_IP2ASN: "/ip2asn.tsv.gz"
   # Canary tokens planted in the fake data to trace where "stolen" data goes.
   # "1" turns planting on (auto-on when a beacon is set). The beacon is an
   # unauthenticated HTTP listener that must be reachable by whatever loads the

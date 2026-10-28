@@ -137,12 +137,16 @@ func serve(args []string) error {
 	}
 	lim := hpcore.Limits{MaxConns: *maxConns, ReadTimeout: *readTimeout, SessionMax: *sessionMax, Tarpit: *tarpit}
 	if *ip2asn != "" {
-		db, err := geoip.Load(*ip2asn)
-		if err != nil {
-			return fmt.Errorf("load ip2asn %q: %w", *ip2asn, err)
+		// Optional data file (baked into the image, or mounted). A missing or
+		// empty file is not fatal: attribution just stays off.
+		if db, err := geoip.Load(*ip2asn); err != nil {
+			log.Printf("WARNING: ip2asn %q not loaded, attribution off: %v", *ip2asn, err)
+		} else if db.Len() == 0 {
+			log.Printf("ip2asn %q is empty, attribution off", *ip2asn)
+		} else {
+			lim.Geo = db
+			log.Printf("ip2asn attribution on: %d ranges from %s", db.Len(), *ip2asn)
 		}
-		lim.Geo = db
-		log.Printf("ip2asn attribution on: %d ranges from %s", db.Len(), *ip2asn)
 	}
 	if *tarpit > 0 {
 		log.Printf("tarpit on: %s before each reply (capped by session-max %s)", *tarpit, *sessionMax)

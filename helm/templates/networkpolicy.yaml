@@ -39,7 +39,8 @@ spec:
         - protocol: TCP
           port: 53
     # State in the shared CNPG cluster. Nothing else: the honeypot never
-    # calls back to anyone (no CrowdSec API, no geoip, no Internet).
+    # calls back to anyone (no CrowdSec API, no Internet). IP attribution is a
+    # local file (ip2asn), not a network call.
     - to:
         - namespaceSelector:
             matchLabels:
