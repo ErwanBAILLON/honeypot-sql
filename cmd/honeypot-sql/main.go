@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ErwanBAILLON/honeypot-sql/internal/beacon"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/geoip"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/mysqlhp"
@@ -111,9 +112,13 @@ func serve(args []string) error {
 	sessionMax := fs.Duration("session-max", 10*time.Minute, "max session duration")
 	tarpit := fs.Duration("tarpit", envDur("HONEYPOT_TARPIT", 0), "delay before each reply to keep the attacker engaged (0 = off); capped by -session-max")
 	ip2asn := fs.String("ip2asn", env("HONEYPOT_IP2ASN", ""), "path to an ip2asn table (iptoasn.com TSV, optionally .gz) for offline country/ASN attribution; empty = off")
+	beaconAddr := fs.String("beacon", env("HONEYPOT_BEACON_ADDR", ""), "canary beacon listen address (empty = off); records who loads a planted URL")
+	beaconURL := fs.String("beacon-url", env("HONEYPOT_BEACON_URL", ""), "public base URL of the beacon woven into fake data, e.g. https://cdn.example/t; empty = no URL tokens")
+	canaryOn := fs.Bool("canary", env("HONEYPOT_CANARY", "") == "1", "plant honeytokens in the fake data of enticing tables (auto-on when a beacon is configured)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	*canaryOn = *canaryOn || *beaconAddr != "" || *beaconURL != ""
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -142,6 +147,9 @@ func serve(args []string) error {
 	if *tarpit > 0 {
 		log.Printf("tarpit on: %s before each reply (capped by session-max %s)", *tarpit, *sessionMax)
 	}
+	if *canaryOn {
+		log.Printf("canary planting on (url tokens: %t)", *beaconURL != "")
+	}
 
 	g, gctx := errgroup.WithContext(ctx)
 	if *mysqlAddr != "" {
@@ -151,7 +159,7 @@ func serve(args []string) error {
 		}
 		log.Printf("mysql honeypot on %s (version %s)", ln.Addr(), *mysqlVersion)
 		g.Go(func() error {
-			return hpcore.Serve(gctx, ln, &mysqlhp.Server{Version: *mysqlVersion, Passwords: pwList}, st, lim)
+			return hpcore.Serve(gctx, ln, &mysqlhp.Server{Version: *mysqlVersion, Passwords: pwList, Canary: *canaryOn, CanaryURL: *beaconURL}, st, lim)
 		})
 	}
 	if *pgAddr != "" {
@@ -161,7 +169,7 @@ func serve(args []string) error {
 		}
 		log.Printf("postgres honeypot on %s (version %s, auth %s)", ln.Addr(), *pgVersion, map[bool]string{true: "md5", false: "cleartext"}[*pgMD5])
 		g.Go(func() error {
-			return hpcore.Serve(gctx, ln, &pghp.Server{Version: *pgVersion, AuthMD5: *pgMD5, Passwords: pwList}, st, lim)
+			return hpcore.Serve(gctx, ln, &pghp.Server{Version: *pgVersion, AuthMD5: *pgMD5, Passwords: pwList, Canary: *canaryOn, CanaryURL: *beaconURL}, st, lim)
 		})
 	}
 	cfg := web.Config{AdminUser: os.Getenv("ADMIN_USER"), AdminPassword: os.Getenv("ADMIN_PASSWORD"), MySQLPort: portOf(*mysqlAddr), PGPort: portOf(*pgAddr)}
@@ -170,6 +178,12 @@ func serve(args []string) error {
 	}
 	log.Printf("dashboard on %s", *httpAddr)
 	g.Go(func() error { return web.Serve(gctx, *httpAddr, web.Handler(st, cfg)) })
+	if *beaconAddr != "" {
+		log.Printf("canary beacon on %s (url base %q)", *beaconAddr, *beaconURL)
+		g.Go(func() error { return beacon.Serve(gctx, *beaconAddr, beacon.Handler(st, lim.Geo)) })
+	} else if *beaconURL != "" {
+		log.Printf("canary URL tokens planted (base %q) but no local beacon listener (-beacon unset)", *beaconURL)
+	}
 	return g.Wait()
 }
 

@@ -37,6 +37,44 @@ type Event struct {
 	Payload   map[string]any `json:"payload"`
 }
 
+// CanaryToken is a unique marker planted in the fake data served to one
+// session (a honeytoken credential, or a URL pointing at the beacon). Seeing
+// it again elsewhere tells us where the "stolen" data travelled.
+type CanaryToken struct {
+	ID        int64     `json:"id"`
+	Token     string    `json:"token"`
+	Kind      string    `json:"kind"` // "credential" | "url"
+	SessionID int64     `json:"session_id"`
+	Label     string    `json:"label"` // where it was planted, e.g. "users.api_key"
+	IssuedAt  time.Time `json:"issued_at"`
+}
+
+// CanaryHit is one trigger of a token: the data came back to us.
+type CanaryHit struct {
+	ID         int64          `json:"id"`
+	Token      string         `json:"token"`
+	Channel    string         `json:"channel"` // "http" | "credential_replay"
+	SourceIP   string         `json:"source_ip"`
+	SourcePort int            `json:"source_port"`
+	Country    string         `json:"country,omitempty"`
+	ASN        int            `json:"asn,omitempty"`
+	ASOrg      string         `json:"as_org,omitempty"`
+	TS         time.Time      `json:"ts"`
+	Detail     map[string]any `json:"detail,omitempty"`
+}
+
+// Canary is the dashboard view of a token and its latest trigger.
+type Canary struct {
+	CanaryToken
+	IssuerIP       string     `json:"issuer_ip"`
+	IssuerCountry  string     `json:"issuer_country"`
+	Hits           int        `json:"hits"`
+	LastHitIP      string     `json:"last_hit_ip,omitempty"`
+	LastHitCountry string     `json:"last_hit_country,omitempty"`
+	LastHitChannel string     `json:"last_hit_channel,omitempty"`
+	LastHitAt      *time.Time `json:"last_hit_at,omitempty"`
+}
+
 // Count is a (value, n) pair used by the dashboard.
 type Count struct {
 	Value string `json:"value"`
@@ -67,6 +105,14 @@ type Store interface {
 	ListSessions(ctx context.Context, limit int) ([]Session, error)
 	GetSession(ctx context.Context, id int64) (*Session, []Event, error)
 	Stats(ctx context.Context) (*Stats, error)
+	// IssueToken records a canary token planted in a session's fake data.
+	IssueToken(ctx context.Context, t *CanaryToken) error
+	// FindToken resolves a token string to its issuing record, or ErrNotFound.
+	FindToken(ctx context.Context, token string) (*CanaryToken, error)
+	// RecordHit stores a trigger of a token.
+	RecordHit(ctx context.Context, h *CanaryHit) error
+	// Canaries lists tokens with their latest trigger, triggered ones first.
+	Canaries(ctx context.Context, limit int) ([]Canary, error)
 	Ping(ctx context.Context) error
 	Close()
 }

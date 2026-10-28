@@ -19,6 +19,62 @@ const (
 type Env struct {
 	User, Database, RemoteIP string
 	Version                  string // server version string advertised in the handshake
+	// Mint, when set, plants a canary token and returns the value to embed in
+	// the fake data (kind "credential" or "url", label = planting site). nil
+	// leaves the answers free of canaries, as before.
+	Mint func(kind, label string) string
+}
+
+// plant returns a canary value for (kind, label), or "" when canaries are off.
+func (e Env) plant(kind, label string) string {
+	if e.Mint == nil {
+		return ""
+	}
+	return e.Mint(kind, label)
+}
+
+// enticingTables are fake tables worth serving (with planted tokens) instead of
+// "table does not exist", so an attacker who dumps them carries our markers.
+var enticingTables = map[string]bool{
+	"users": true, "accounts": true, "customers": true, "credentials": true, "creds": true,
+	"secrets": true, "api_keys": true, "apikeys": true, "tokens": true, "config": true,
+	"configs": true, "settings": true, "passwords": true, "logins": true,
+}
+
+// canaryTable builds a small, believable result for a dump of an enticing table,
+// carrying one honeytoken credential and one beacon URL. It returns ok=false
+// when canaries are off or the table is not one we bait.
+func canaryTable(q string, env Env) (Result, bool) {
+	if env.Mint == nil {
+		return Result{}, false
+	}
+	t := strings.ToLower(tableName(q))
+	if i := strings.LastIndex(t, "."); i >= 0 {
+		t = t[i+1:]
+	}
+	if !enticingTables[t] {
+		return Result{}, false
+	}
+	cred := env.plant("credential", t+".secret")
+	url := env.plant("url", t+".backup_url")
+	if cred == "" && url == "" {
+		return Result{}, false // per-session cap reached: fall back to the normal answer
+	}
+	secret, backup := cred, url
+	if secret == "" {
+		secret = "s3cr3t-rotated-2026"
+	}
+	var backupCell *string
+	if backup != "" {
+		backupCell = s(backup)
+	}
+	return Result{
+		Cols: []string{"id", "username", "email", "secret", "backup_url"},
+		Rows: [][]*string{
+			{s("1"), s("admin"), s("admin@corp.internal"), s("$2y$10$9QF1u6kqZwLx3nR2uO7redacted"), nil},
+			{s("2"), s("svc_backup"), s("backup@corp.internal"), s(secret), backupCell},
+		},
+	}, true
 }
 
 // SQLError is a realistic protocol error.
@@ -218,6 +274,11 @@ func mysqlAnswer(q, lq string, env Env) Result {
 			{s("localhost"), s("root"), s("*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B"), s("mysql_native_password")},
 			{s("%"), s("app"), s("*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19"), s("mysql_native_password")}}}
 	}
+	if strings.HasPrefix(lq, "select") || strings.HasPrefix(lq, "describe") || strings.HasPrefix(lq, "desc ") {
+		if r, ok := canaryTable(q, env); ok {
+			return r
+		}
+	}
 	switch strings.ToLower(reFirst.FindString(q)) {
 	case "select", "insert", "update", "delete", "replace", "load", "truncate", "alter", "describe", "desc", "explain", "lock", "call":
 		t := tableName(q)
@@ -272,6 +333,9 @@ func pgAnswer(q, lq string, env Env) Result {
 		if !strings.Contains(lq, " from ") {
 			// Simple expression probes: echo one text column named ?column?.
 			return Result{Cols: []string{"?column?"}, Rows: [][]*string{{s(strings.TrimSpace(q[7:]))}}}
+		}
+		if r, ok := canaryTable(q, env); ok {
+			return r
 		}
 		return Result{Err: &SQLError{0, "42P01", "relation \"" + tableName(q) + "\" does not exist"}}
 	case strings.HasPrefix(lq, "insert "), strings.HasPrefix(lq, "update "), strings.HasPrefix(lq, "delete "), strings.HasPrefix(lq, "truncate "), strings.HasPrefix(lq, "alter "), strings.HasPrefix(lq, "drop "):

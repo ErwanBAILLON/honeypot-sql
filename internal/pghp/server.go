@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/ErwanBAILLON/honeypot-sql/internal/canary"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/fakedb"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
 )
@@ -18,6 +19,10 @@ type Server struct {
 	Version   string // "16.3"
 	AuthMD5   bool   // ask md5 instead of cleartext (records only the hash then)
 	Passwords []string
+	// Canary enables planting honeytokens in the fake data; CanaryURL is the
+	// beacon base URL woven into URL tokens (empty = credential tokens only).
+	Canary    bool
+	CanaryURL string
 	pid       atomic.Uint32
 }
 
@@ -141,7 +146,11 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 	if _, err := c.Write(buf.Bytes()); err != nil {
 		return
 	}
-	s.queryLoop(ctx, c, fakedb.Env{User: user, Database: db, RemoteIP: c.Rec.RemoteIP, Version: s.version()})
+	var mint func(kind, label string) string
+	if s.Canary {
+		mint = canary.NewMinter(ctx, c.Store, c.Rec.ID, s.CanaryURL).Mint
+	}
+	s.queryLoop(ctx, c, fakedb.Env{User: user, Database: db, RemoteIP: c.Rec.RemoteIP, Version: s.version(), Mint: mint})
 }
 
 type portal struct {

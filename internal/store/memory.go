@@ -14,8 +14,12 @@ type Memory struct {
 	mu          sync.Mutex
 	nextID      int64
 	nextEventID int64
+	nextTokenID int64
+	nextHitID   int64
 	sessions    []*Session // oldest first
 	events      map[int64][]Event
+	tokens      []*CanaryToken // oldest first, capped
+	hits        []*CanaryHit   // oldest first, capped
 	maxSessions int
 }
 
@@ -160,6 +164,86 @@ func topN(m map[string]int64, n int) []Count {
 		out = out[:n]
 	}
 	return out
+}
+
+func (m *Memory) IssueToken(_ context.Context, t *CanaryToken) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextTokenID++
+	t.ID = m.nextTokenID
+	if t.IssuedAt.IsZero() {
+		t.IssuedAt = time.Now()
+	}
+	cp := *t
+	m.tokens = append(m.tokens, &cp)
+	if len(m.tokens) > m.maxSessions {
+		m.tokens = m.tokens[1:]
+	}
+	return nil
+}
+
+func (m *Memory) FindToken(_ context.Context, token string) (*CanaryToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.tokens) - 1; i >= 0; i-- {
+		if m.tokens[i].Token == token {
+			cp := *m.tokens[i]
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (m *Memory) RecordHit(_ context.Context, h *CanaryHit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextHitID++
+	h.ID = m.nextHitID
+	if h.TS.IsZero() {
+		h.TS = time.Now()
+	}
+	cp := *h
+	m.hits = append(m.hits, &cp)
+	if len(m.hits) > m.maxSessions {
+		m.hits = m.hits[1:]
+	}
+	return nil
+}
+
+func (m *Memory) Canaries(_ context.Context, limit int) ([]Canary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 200
+	}
+	out := make([]Canary, 0, len(m.tokens))
+	for _, t := range m.tokens {
+		c := Canary{CanaryToken: *t}
+		if s := m.find(t.SessionID); s != nil {
+			c.IssuerIP, c.IssuerCountry = s.RemoteIP, s.Country
+		}
+		for _, h := range m.hits { // oldest first, so the last match is the latest
+			if h.Token == t.Token {
+				c.Hits++
+				ts := h.TS
+				c.LastHitIP, c.LastHitCountry, c.LastHitChannel, c.LastHitAt = h.SourceIP, h.Country, h.Channel, &ts
+			}
+		}
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].LastHitAt != nil) != (out[j].LastHitAt != nil) {
+			return out[i].LastHitAt != nil // triggered first
+		}
+		if out[i].LastHitAt != nil && !out[i].LastHitAt.Equal(*out[j].LastHitAt) {
+			return out[i].LastHitAt.After(*out[j].LastHitAt)
+		}
+		return out[i].IssuedAt.After(out[j].IssuedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *Memory) Ping(context.Context) error { return nil }

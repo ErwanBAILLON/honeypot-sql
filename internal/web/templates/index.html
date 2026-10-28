@@ -28,7 +28,7 @@ code{white-space:pre-wrap;word-break:break-all}
   <h1>honeypot-sql</h1>
   <span>MySQL :{{.Cfg.MySQLPort}} · PostgreSQL :{{.Cfg.PGPort}}</span>
   <span>{{fmtTime .Now}}</span>
-  <span><a href="/api/sessions">/api/sessions</a> · <a href="/api/stats">/api/stats</a> · <a href="/metrics">/metrics</a></span>
+  <span><a href="/api/sessions">/api/sessions</a> · <a href="/api/canaries">/api/canaries</a> · <a href="/api/stats">/api/stats</a> · <a href="/metrics">/metrics</a></span>
 </header>
 <main>
   <div class="tiles">
@@ -65,6 +65,28 @@ code{white-space:pre-wrap;word-break:break-all}
         <td class="n">{{.BytesIn}}/{{.BytesOut}}</td>
       </tr>
       {{else}}<tr><td colspan="11" class="muted">aucune session pour l'instant</td></tr>{{end}}
+    </table>
+  </section>
+  <section>
+    <h2>Canaries — où part la fausse donnée</h2>
+    <table>
+      <tr><th>jeton</th><th>type</th><th>planté dans</th><th>donné à</th><th>émis</th><th>déclenché</th><th>depuis</th><th>via</th></tr>
+      {{range .Canaries}}
+      <tr>
+        <td title="{{.Token}}"><code>{{short .Token}}</code></td>
+        <td class="muted">{{.Kind}}</td>
+        <td class="muted">{{.Label}}</td>
+        <td>{{if .SessionID}}<a href="/sessions/{{.SessionID}}">#{{.SessionID}}</a> {{.IssuerIP}} {{.IssuerCountry}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td title="{{fmtTime .IssuedAt}}">il y a {{ago .IssuedAt}}</td>
+        {{if .LastHitAt}}
+        <td class="pw">{{.Hits}}× · il y a {{ago .LastHitAt}}</td>
+        <td class="pw">{{.LastHitIP}} {{.LastHitCountry}}</td>
+        <td class="muted">{{.LastHitChannel}}</td>
+        {{else}}
+        <td class="muted">jamais</td><td class="muted">—</td><td class="muted">—</td>
+        {{end}}
+      </tr>
+      {{else}}<tr><td colspan="8" class="muted">aucun canary (beacon/canary désactivé ?)</td></tr>{{end}}
     </table>
   </section>
 </main>

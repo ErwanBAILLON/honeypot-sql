@@ -89,6 +89,15 @@ env:
   # (bake it into the image or mount it read-only); the honeypot never fetches
   # it at runtime. See the README "Attribution" section.
   HONEYPOT_IP2ASN: ""
+  # Canary tokens planted in the fake data to trace where "stolen" data goes.
+  # "1" turns planting on (auto-on when a beacon is set). The beacon is an
+  # unauthenticated HTTP listener that must be reachable by whatever loads the
+  # planted URL, so exposing it is a deliberate choice: these ship off, and no
+  # ingress/listener is wired until you decide where the beacon lives. See the
+  # README "Canary tokens" section.
+  HONEYPOT_CANARY: ""
+  HONEYPOT_BEACON_ADDR: ""
+  HONEYPOT_BEACON_URL: ""
 
 # Vault entry (via ESO): DATABASE_URL, ADMIN_USER, ADMIN_PASSWORD, optional HONEYPOT_PASSWORDS.
 vault:

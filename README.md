@@ -18,6 +18,7 @@ Single static Go binary, no CGO, runs as non-root on distroless.
 | PostgreSQL startup v3, `SSLRequest` answered `N`, cleartext or md5 password, simple **and** extended query protocol (Parse/Bind/Execute, what pgx, psycopg, JDBC use) | Open outbound connections (NetworkPolicy: DNS + the state database only) |
 | Records user, database, password as sent (MySQL: plaintext when it matches a honeytoken or a common password, otherwise the SHA1 scramble), client capabilities, `application_name`, every query with timing, bytes in/out | Keep state on the attacker's behalf, run prepared statements, speak TLS |
 | Attributes the source IP to a country and autonomous system **offline**, from a local ip2asn table, and can **tarpit** (slow its own replies) to keep a bot engaged | Call any geolocation API, or open any connection *toward* the attacker. Attribution reads a local file; the tarpit only delays our own writes |
+| Plants **canary tokens** (a honeytoken credential, a beacon URL) in the fake data, and records where they resurface — a URL loaded on the beacon, a credential replayed on a listener — linked back to the session that received them | Put any code-executing payload in the fake data. Tokens are passive: a URL that only gets fetched, a credential that only gets tried. The beacon *receives*; it never reaches out |
 | Per-read timeout 30 s, session cap 10 min, 200 queries, 1 MiB packets, 500 concurrent connections per listener (extra connections are closed at accept) | Retaliate. Decisions are made by CrowdSec from the log line, nothing else |
 | Bounded storage: client blobs (auth response, bad handshake, connect attrs, startup params) are kept up to 256 bytes verbatim plus length and sha256; any event payload over 16 KiB or client_info over 32 KiB is replaced by a summary. A 1 MiB packet costs a few KB in the database, never megabytes | Persist what the client sent as is |
 
@@ -56,6 +57,9 @@ Flags or environment (`honeypot-sql serve -h`):
 | `DATABASE_URL` | empty | Postgres DSN; empty = in-memory store (tests, local runs) |
 | `HONEYPOT_TARPIT` | `0` | delay before each reply (e.g. `2s`); keeps attackers engaged. See Tarpit |
 | `HONEYPOT_IP2ASN` | empty | path to an ip2asn table for offline country/ASN attribution. See Attribution |
+| `HONEYPOT_CANARY` | empty | `1` plants canary tokens in the fake data (auto-on when a beacon is set). See Canary tokens |
+| `HONEYPOT_BEACON_ADDR` | empty | listen address of the canary beacon (e.g. `:8081`); empty = no local beacon |
+| `HONEYPOT_BEACON_URL` | empty | public base URL of the beacon woven into fake data (e.g. `https://cdn.example/t`); empty = credential tokens only |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | empty | dashboard basic auth. Empty = dashboard refuses everything |
 
 Local run without a database:
@@ -111,6 +115,47 @@ want a higher `HONEYPOT_MAX_CONNS` or you accept fewer concurrent attackers.
 The handshake itself is left at full speed so clients complete auth and we
 capture the credentials before the stalling begins.
 
+## Canary tokens (tracing where the fake data goes)
+
+With `HONEYPOT_CANARY=1`, a request to dump an enticing table (`users`,
+`credentials`, `secrets`, `config`, …) is served a small, believable result
+instead of "table does not exist", and that result carries **unique markers**
+planted per session (`internal/canary`, capped at 8 per session):
+
+- a **honeytoken credential** in a service-account row;
+- a **beacon URL** in a `backup_url` column (only when a beacon URL is set).
+
+Each token is linked to the session that received it. When the "stolen" data is
+reused, we see it come back and record the source (IP, geo, time, user-agent),
+through two channels:
+
+- **Beacon** (the black box): a tiny unauthenticated HTTP listener
+  (`-beacon :8081`, `internal/beacon`). When the planted URL is loaded, the hit
+  lands here; it logs and returns a blank 1×1 GIF. It only ever *receives* — no
+  outbound call, the no-outbound invariant holds. The URL woven into the data is
+  `-beacon-url` (e.g. `https://cdn.example/t`), which must point at wherever the
+  beacon is reachable.
+- **Credential replay**: when a planted credential comes back as a login on our
+  own MySQL/PostgreSQL listeners, it is matched to the issuing session. It is
+  recognised in cleartext (PostgreSQL `cleartext` auth) or as a username on
+  either protocol; a MySQL password scramble is opaque and is not matched, so
+  the beacon is the protocol-agnostic tracer.
+
+Triggers show on the dashboard ("Canaries — où part la fausse donnée") and in a
+`sql_honeypot_canary` JSON log line. Planting is off by default; it turns on
+with `HONEYPOT_CANARY=1` or automatically when a beacon is configured.
+
+```sh
+go run ./cmd/honeypot-sql serve -mysql :13306 -pg :15432 -http :18080 \
+  -canary -beacon :18081 -beacon-url http://127.0.0.1:18081/t
+mysql -h127.0.0.1 -P13306 -uroot -proot -e 'select * from users'   # carries the tokens
+```
+
+Exposure is a deployment choice left open here: the beacon must be reachable by
+whatever ends up loading the URL, which means a public, unauthenticated
+endpoint. The Helm values ship the knobs off; wire the listener and an ingress
+only when you decide where the beacon should live.
+
 ## Tests
 
 ```sh
@@ -118,9 +163,11 @@ go vet ./... && go test -race ./...
 ```
 
 `internal/*` tests cover the codecs (handshake layout, lenenc, OK/ERR/EOF,
-startup, RowDescription/DataRow, md5), the ip2asn lookup (v4, v6, gaps, nil DB)
-and the tarpit (off is instant, a cancelled context wakes it, a set delay is
-honoured). `tests/` starts both listeners in-process with the memory store and
+startup, RowDescription/DataRow, md5), the ip2asn lookup (v4, v6, gaps, nil DB),
+the tarpit (off is instant, a cancelled context wakes it, a set delay is
+honoured) and the canaries (minter cap and stability, URL vs credential tokens,
+the beacon recording a hit and returning the pixel, credential-replay matching
+and its link to the issuing session). `tests/` starts both listeners in-process with the memory store and
 connects with the real client libraries: handshake, auth, `SELECT VERSION()`,
 `SHOW DATABASES`, `\l` query, error SQLSTATEs, the SSLRequest fallback of pgx,
 honeytoken rejection, garbage input, the dashboard and its basic auth. CI runs

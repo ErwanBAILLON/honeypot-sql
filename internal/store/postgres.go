@@ -49,6 +49,27 @@ CREATE TABLE IF NOT EXISTS events (
   payload    JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS events_session_id_idx ON events (session_id);
+CREATE TABLE IF NOT EXISTS canary_tokens (
+  id         BIGSERIAL PRIMARY KEY,
+  token      TEXT NOT NULL UNIQUE,
+  kind       TEXT NOT NULL,
+  session_id BIGINT REFERENCES sessions(id) ON DELETE SET NULL,
+  label      TEXT NOT NULL DEFAULT '',
+  issued_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS canary_hits (
+  id          BIGSERIAL PRIMARY KEY,
+  token       TEXT NOT NULL,
+  channel     TEXT NOT NULL,
+  source_ip   TEXT NOT NULL DEFAULT '',
+  source_port INT NOT NULL DEFAULT 0,
+  country     TEXT NOT NULL DEFAULT '',
+  asn         INT NOT NULL DEFAULT 0,
+  as_org      TEXT NOT NULL DEFAULT '',
+  ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  detail      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS canary_hits_token_idx ON canary_hits (token);
 `
 
 // NewPostgres connects and applies the schema (idempotent).
@@ -212,6 +233,78 @@ func (p *Postgres) counts(ctx context.Context, q string) ([]Count, error) {
 	for rows.Next() {
 		var c Count
 		if err := rows.Scan(&c.Value, &c.N); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) IssueToken(ctx context.Context, t *CanaryToken) error {
+	if t.IssuedAt.IsZero() {
+		t.IssuedAt = time.Now()
+	}
+	var sid any
+	if t.SessionID != 0 {
+		sid = t.SessionID
+	}
+	return p.pool.QueryRow(ctx, `INSERT INTO canary_tokens (token, kind, session_id, label, issued_at)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id`, t.Token, t.Kind, sid, t.Label, t.IssuedAt).Scan(&t.ID)
+}
+
+func (p *Postgres) FindToken(ctx context.Context, token string) (*CanaryToken, error) {
+	var t CanaryToken
+	var sid *int64
+	err := p.pool.QueryRow(ctx, `SELECT id, token, kind, COALESCE(session_id,0), label, issued_at FROM canary_tokens WHERE token=$1`, token).
+		Scan(&t.ID, &t.Token, &t.Kind, &sid, &t.Label, &t.IssuedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if sid != nil {
+		t.SessionID = *sid
+	}
+	return &t, nil
+}
+
+func (p *Postgres) RecordHit(ctx context.Context, h *CanaryHit) error {
+	if h.TS.IsZero() {
+		h.TS = time.Now()
+	}
+	detail, _ := json.Marshal(nilToEmpty(h.Detail))
+	return p.pool.QueryRow(ctx, `INSERT INTO canary_hits (token, channel, source_ip, source_port, country, asn, as_org, ts, detail)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		h.Token, h.Channel, h.SourceIP, h.SourcePort, h.Country, h.ASN, h.ASOrg, h.TS, detail).Scan(&h.ID)
+}
+
+func (p *Postgres) Canaries(ctx context.Context, limit int) ([]Canary, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT t.id, t.token, t.kind, COALESCE(t.session_id,0), t.label, t.issued_at,
+		       COALESCE(host(s.remote_ip),''), COALESCE(s.country,''),
+		       (SELECT count(*) FROM canary_hits h WHERE h.token=t.token),
+		       COALESCE(lh.source_ip,''), COALESCE(lh.country,''), COALESCE(lh.channel,''), lh.ts
+		FROM canary_tokens t
+		LEFT JOIN sessions s ON s.id = t.session_id
+		LEFT JOIN LATERAL (
+		  SELECT source_ip, country, channel, ts FROM canary_hits h
+		  WHERE h.token = t.token ORDER BY ts DESC LIMIT 1
+		) lh ON true
+		ORDER BY (lh.ts IS NOT NULL) DESC, lh.ts DESC NULLS LAST, t.issued_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Canary
+	for rows.Next() {
+		var c Canary
+		if err := rows.Scan(&c.ID, &c.Token, &c.Kind, &c.SessionID, &c.Label, &c.IssuedAt,
+			&c.IssuerIP, &c.IssuerCountry, &c.Hits, &c.LastHitIP, &c.LastHitCountry, &c.LastHitChannel, &c.LastHitAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

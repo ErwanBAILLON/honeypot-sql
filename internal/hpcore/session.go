@@ -180,6 +180,37 @@ func (s *Session) Credentials(user, database, password string, extra map[string]
 		line["country"], line["asn"], line["as_org"] = s.Rec.Country, s.Rec.ASN, s.Rec.ASOrg
 	}
 	hplog.Emit("sql_honeypot_auth", line)
+	// Credential replay: a honeytoken we planted in a past session's fake data
+	// has come back as a login. The cleartext value (PG) or the username (both
+	// protocols) is what matches; a MySQL scramble is opaque and will not.
+	s.checkReplay(s.Rec.Username, "username")
+	s.checkReplay(s.Rec.PasswordSeen, "password")
+}
+
+// checkReplay records a canary hit when value is a token we handed out before.
+func (s *Session) checkReplay(value, field string) {
+	if len(value) < 8 { // tokens are long; skip empty / common credentials
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tok, err := s.Store.FindToken(ctx, value)
+	if err != nil {
+		return
+	}
+	hit := &store.CanaryHit{
+		Token: value, Channel: "credential_replay", SourceIP: s.Rec.RemoteIP, SourcePort: s.Rec.RemotePort,
+		Country: s.Rec.Country, ASN: s.Rec.ASN, ASOrg: s.Rec.ASOrg, TS: time.Now(),
+		Detail: map[string]any{"field": field, "issued_to_session": tok.SessionID, "label": tok.Label, "proto": s.Rec.Proto},
+	}
+	if err := s.Store.RecordHit(ctx, hit); err != nil {
+		log.Printf("store: record replay hit: %v", err)
+		return
+	}
+	hplog.Emit("sql_honeypot_canary", map[string]any{
+		"channel": "credential_replay", "token": value, "field": field, "remote_ip": s.Rec.RemoteIP,
+		"country": s.Rec.Country, "asn": s.Rec.ASN, "issued_to_session": tok.SessionID,
+	})
 }
 
 // ClientInfo merges non-credential facts (capabilities, versions, parameters).

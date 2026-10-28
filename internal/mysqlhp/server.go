@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"sync/atomic"
 
+	"github.com/ErwanBAILLON/honeypot-sql/internal/canary"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/fakedb"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
 )
@@ -16,6 +17,10 @@ type Server struct {
 	// Passwords, when non-empty, is the honeytoken list: only these are accepted
 	// (mysql_native_password hash compared). Empty = accept everything.
 	Passwords []string
+	// Canary enables planting honeytokens in the fake data; CanaryURL is the
+	// beacon base URL woven into URL tokens (empty = credential tokens only).
+	Canary    bool
+	CanaryURL string
 	connID    atomic.Uint32
 }
 
@@ -110,7 +115,11 @@ func (s *Server) Handle(ctx context.Context, c *hpcore.Session) {
 	if err := WritePacket(c, seq+1, OKPacket(0, "")); err != nil {
 		return
 	}
-	s.commandLoop(ctx, c, resp)
+	var mint func(kind, label string) string
+	if s.Canary {
+		mint = canary.NewMinter(ctx, c.Store, c.Rec.ID, s.CanaryURL).Mint
+	}
+	s.commandLoop(ctx, c, resp, mint)
 }
 
 func yesNo(b bool) string {
@@ -143,7 +152,7 @@ func (s *Server) matchPassword(authResp []byte, salt [20]byte) (string, bool) {
 var commonPasswords = []string{"root", "password", "123456", "mysql", "admin", "toor", "test", "12345678", "1234", "root123",
 	"Password1", "P@ssw0rd", "qwerty", "123123", "111111", "mysql123", "admin123", "pass", "secret", "changeme", "letmein"}
 
-func (s *Server) commandLoop(ctx context.Context, c *hpcore.Session, resp *HandshakeResponse) {
+func (s *Server) commandLoop(ctx context.Context, c *hpcore.Session, resp *HandshakeResponse, mint func(kind, label string) string) {
 	db := resp.Database
 	for ctx.Err() == nil {
 		_, payload, err := ReadPacket(c, c.Limits.MaxPacket)
@@ -179,7 +188,7 @@ func (s *Server) commandLoop(ctx context.Context, c *hpcore.Session, resp *Hands
 				_ = WritePacket(c, 1, ErrPacket(1040, "08004", "Too many connections"))
 				return
 			}
-			res := fakedb.Answer(fakedb.MySQL, sql, fakedb.Env{User: resp.Username, Database: db, RemoteIP: c.Rec.RemoteIP, Version: s.version()})
+			res := fakedb.Answer(fakedb.MySQL, sql, fakedb.Env{User: resp.Username, Database: db, RemoteIP: c.Rec.RemoteIP, Version: s.version(), Mint: mint})
 			if err := s.writeResult(c, res); err != nil {
 				return
 			}

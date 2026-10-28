@@ -32,7 +32,19 @@ type Config struct {
 // Handler builds the HTTP mux.
 func Handler(st store.Store, cfg Config) http.Handler {
 	funcs := template.FuncMap{
-		"ago": func(t time.Time) string {
+		"ago": func(v any) string {
+			var t time.Time
+			switch x := v.(type) {
+			case time.Time:
+				t = x
+			case *time.Time:
+				if x == nil {
+					return "—"
+				}
+				t = *x
+			default:
+				return ""
+			}
 			d := time.Since(t).Round(time.Second)
 			switch {
 			case d < time.Minute:
@@ -95,7 +107,12 @@ func Handler(st store.Store, cfg Config) http.Handler {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		render(w, tmpl, "index.html", map[string]any{"Stats": stats, "Sessions": sessions, "Cfg": cfg, "Now": time.Now()})
+		canaries, err := st.Canaries(r.Context(), 50)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		render(w, tmpl, "index.html", map[string]any{"Stats": stats, "Sessions": sessions, "Canaries": canaries, "Cfg": cfg, "Now": time.Now()})
 	}))
 	mux.Handle("GET /sessions/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -145,6 +162,21 @@ func Handler(st store.Store, cfg Config) http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"session": s, "events": evs})
+	}))
+	mux.Handle("GET /api/canaries", auth(func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 || limit > 1000 {
+			limit = 200
+		}
+		canaries, err := st.Canaries(r.Context(), limit)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if canaries == nil {
+			canaries = []store.Canary{}
+		}
+		writeJSON(w, canaries)
 	}))
 	mux.Handle("GET /api/stats", auth(func(w http.ResponseWriter, r *http.Request) {
 		stats, err := st.Stats(r.Context())
