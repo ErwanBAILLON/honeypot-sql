@@ -23,7 +23,8 @@ th{color:var(--muted);font-weight:normal;white-space:nowrap}.pw{color:var(--bad)
     <table>
       <tr><th>début</th><td>{{fmtTime .S.StartedAt}}</td></tr>
       <tr><th>fin</th><td>{{if .S.EndedAt}}{{fmtTime .S.EndedAt}} ({{dur .S}}){{else}}en cours{{end}}</td></tr>
-      <tr><th>utilisateur</th><td>{{.S.Username}}</td></tr>
+      <tr><th>origine</th><td>{{if .S.Country}}{{.S.Country}}{{if .S.ASN}} · AS{{.S.ASN}} {{.S.ASOrg}}{{end}}{{else}}<span class="muted">inconnue (ip2asn désactivé ?)</span>{{end}}</td></tr>
+<tr><th>utilisateur</th><td>{{.S.Username}}</td></tr>
       <tr><th>base</th><td>{{.S.Database}}</td></tr>
       <tr><th>mot de passe</th><td class="pw">{{.S.PasswordSeen}}</td></tr>
       <tr><th>octets in / out</th><td>{{.S.BytesIn}} / {{.S.BytesOut}}</td></tr>

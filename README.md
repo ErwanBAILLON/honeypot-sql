@@ -17,6 +17,7 @@ Single static Go binary, no CGO, runs as non-root on distroless.
 | MySQL handshake v10, `mysql_native_password`, `AuthSwitchRequest` for `caching_sha2_password` clients, connect attributes, text result sets | Execute SQL. Every answer is a static table from `internal/fakedb` |
 | PostgreSQL startup v3, `SSLRequest` answered `N`, cleartext or md5 password, simple **and** extended query protocol (Parse/Bind/Execute, what pgx, psycopg, JDBC use) | Open outbound connections (NetworkPolicy: DNS + the state database only) |
 | Records user, database, password as sent (MySQL: plaintext when it matches a honeytoken or a common password, otherwise the SHA1 scramble), client capabilities, `application_name`, every query with timing, bytes in/out | Keep state on the attacker's behalf, run prepared statements, speak TLS |
+| Attributes the source IP to a country and autonomous system **offline**, from a local ip2asn table, and can **tarpit** (slow its own replies) to keep a bot engaged | Call any geolocation API, or open any connection *toward* the attacker. Attribution reads a local file; the tarpit only delays our own writes |
 | Per-read timeout 30 s, session cap 10 min, 200 queries, 1 MiB packets, 500 concurrent connections per listener (extra connections are closed at accept) | Retaliate. Decisions are made by CrowdSec from the log line, nothing else |
 | Bounded storage: client blobs (auth response, bad handshake, connect attrs, startup params) are kept up to 256 bytes verbatim plus length and sha256; any event payload over 16 KiB or client_info over 32 KiB is replaced by a summary. A 1 MiB packet costs a few KB in the database, never megabytes | Persist what the client sent as is |
 
@@ -53,6 +54,8 @@ Flags or environment (`honeypot-sql serve -h`):
 | `HONEYPOT_PASSWORDS` | empty | comma-separated honeytokens. Empty = accept every credential |
 | `HONEYPOT_MAX_CONNS` | `500` | concurrent connections per listener |
 | `DATABASE_URL` | empty | Postgres DSN; empty = in-memory store (tests, local runs) |
+| `HONEYPOT_TARPIT` | `0` | delay before each reply (e.g. `2s`); keeps attackers engaged. See Tarpit |
+| `HONEYPOT_IP2ASN` | empty | path to an ip2asn table for offline country/ASN attribution. See Attribution |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | empty | dashboard basic auth. Empty = dashboard refuses everything |
 
 Local run without a database:
@@ -64,6 +67,50 @@ mysql -h 127.0.0.1 -P 13306 -u root -proot -e 'select version(); show databases'
 psql 'postgres://x:y@127.0.0.1:15432/db?sslmode=disable' -c '\l'
 ```
 
+## Attribution (where the attack comes from)
+
+The honeypot can label every session with the source country and autonomous
+system (number and organisation), entirely offline. It reads the public-domain
+**ip2asn** table from <https://iptoasn.com> — a TSV of
+`range_start  range_end  AS_number  country_code  AS_description`, plain or
+gzip — mounted locally and pointed at by `HONEYPOT_IP2ASN`. Ranges are sorted
+once and looked up by binary search (`internal/geoip`); IPv4 and IPv6 are both
+covered. No network call is ever made: this preserves the "never opens outbound
+connections" invariant, and the NetworkPolicy still blocks everything but DNS
+and the state database.
+
+When the file is absent the feature is simply off and the honeypot behaves
+exactly as before. When present, the country and AS appear on the dashboard
+(top countries, top networks, and per session) and in both JSON log lines
+(`sql_honeypot_touch`, `sql_honeypot_auth`), so CrowdSec scenarios can match on
+them.
+
+```sh
+curl -sO https://iptoasn.com/data/ip2asn-combined.tsv.gz   # ~5 MB, refresh when you like
+go run ./cmd/honeypot-sql serve ... -ip2asn ip2asn-combined.tsv.gz
+```
+
+In the cluster, bake the file into the image at build time (the build runner
+has network; the running honeypot never does) or mount it read-only, then set
+`HONEYPOT_IP2ASN` to its path. The table is redistributable (RouteViews data,
+public domain).
+
+## Tarpit (keeping the attacker engaged)
+
+With `HONEYPOT_TARPIT` set to a duration (e.g. `-tarpit 2s`), the honeypot waits
+that long — plus up to 50 % jitter — before each reply in the command/query
+loop, so a bot stays connected and busy against us instead of moving on. It is
+off by default (`0`).
+
+This only ever **slows our own writes**; it never opens or holds anything
+toward the attacker. The session cap (`-session-max`, 10 min) still bounds the
+whole exchange, and the hard deadline fires even mid-delay, so a tarpit can only
+make a session end sooner than its cap, never run forever. The cost is capacity:
+a stalled session holds its connection slot longer, so with a busy tarpit you
+want a higher `HONEYPOT_MAX_CONNS` or you accept fewer concurrent attackers.
+The handshake itself is left at full speed so clients complete auth and we
+capture the credentials before the stalling begins.
+
 ## Tests
 
 ```sh
@@ -71,11 +118,13 @@ go vet ./... && go test -race ./...
 ```
 
 `internal/*` tests cover the codecs (handshake layout, lenenc, OK/ERR/EOF,
-startup, RowDescription/DataRow, md5). `tests/` starts both listeners in-process
-with the memory store and connects with the real client libraries: handshake,
-auth, `SELECT VERSION()`, `SHOW DATABASES`, `\l` query, error SQLSTATEs, the
-SSLRequest fallback of pgx, honeytoken rejection, garbage input, the dashboard
-and its basic auth. CI runs the same before building the image.
+startup, RowDescription/DataRow, md5), the ip2asn lookup (v4, v6, gaps, nil DB)
+and the tarpit (off is instant, a cancelled context wakes it, a set delay is
+honoured). `tests/` starts both listeners in-process with the memory store and
+connects with the real client libraries: handshake, auth, `SELECT VERSION()`,
+`SHOW DATABASES`, `\l` query, error SQLSTATEs, the SSLRequest fallback of pgx,
+honeytoken rejection, garbage input, the dashboard and its basic auth. CI runs
+the same before building the image.
 
 ## Deployment (homelab)
 

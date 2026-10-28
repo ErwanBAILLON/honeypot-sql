@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ErwanBAILLON/honeypot-sql/internal/geoip"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/hpcore"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/mysqlhp"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/pghp"
@@ -34,6 +35,13 @@ func env(key, def string) string {
 
 func envInt(key string, def int) int {
 	if v, err := strconv.Atoi(env(key, "")); err == nil {
+		return v
+	}
+	return def
+}
+
+func envDur(key string, def time.Duration) time.Duration {
+	if v, err := time.ParseDuration(env(key, "")); err == nil {
 		return v
 	}
 	return def
@@ -101,6 +109,8 @@ func serve(args []string) error {
 	maxConns := fs.Int("max-conns", envInt("HONEYPOT_MAX_CONNS", 500), "max concurrent connections per listener")
 	readTimeout := fs.Duration("read-timeout", 30*time.Second, "per-read timeout")
 	sessionMax := fs.Duration("session-max", 10*time.Minute, "max session duration")
+	tarpit := fs.Duration("tarpit", envDur("HONEYPOT_TARPIT", 0), "delay before each reply to keep the attacker engaged (0 = off); capped by -session-max")
+	ip2asn := fs.String("ip2asn", env("HONEYPOT_IP2ASN", ""), "path to an ip2asn table (iptoasn.com TSV, optionally .gz) for offline country/ASN attribution; empty = off")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -120,7 +130,18 @@ func serve(args []string) error {
 			pwList = append(pwList, p)
 		}
 	}
-	lim := hpcore.Limits{MaxConns: *maxConns, ReadTimeout: *readTimeout, SessionMax: *sessionMax}
+	lim := hpcore.Limits{MaxConns: *maxConns, ReadTimeout: *readTimeout, SessionMax: *sessionMax, Tarpit: *tarpit}
+	if *ip2asn != "" {
+		db, err := geoip.Load(*ip2asn)
+		if err != nil {
+			return fmt.Errorf("load ip2asn %q: %w", *ip2asn, err)
+		}
+		lim.Geo = db
+		log.Printf("ip2asn attribution on: %d ranges from %s", db.Len(), *ip2asn)
+	}
+	if *tarpit > 0 {
+		log.Printf("tarpit on: %s before each reply (capped by session-max %s)", *tarpit, *sessionMax)
+	}
 
 	g, gctx := errgroup.WithContext(ctx)
 	if *mysqlAddr != "" {

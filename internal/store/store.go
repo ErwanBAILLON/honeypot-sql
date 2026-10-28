@@ -20,6 +20,9 @@ type Session struct {
 	Username     string         `json:"username"`
 	Database     string         `json:"database"`
 	PasswordSeen string         `json:"password_seen"`
+	Country      string         `json:"country,omitempty"` // ISO alpha-2, offline ip2asn attribution
+	ASN          int            `json:"asn,omitempty"`
+	ASOrg        string         `json:"as_org,omitempty"`
 	ClientInfo   map[string]any `json:"client_info"`
 	BytesIn      int64          `json:"bytes_in"`
 	BytesOut     int64          `json:"bytes_out"`
@@ -47,6 +50,8 @@ type Stats struct {
 	ByProto      map[string]int64 `json:"by_proto"`
 	WithAuth     int64            `json:"with_auth"`
 	TopIPs       []Count          `json:"top_ips"`
+	TopCountries []Count          `json:"top_countries"`
+	TopASNs      []Count          `json:"top_asns"`
 	TopUsernames []Count          `json:"top_usernames"`
 	TopPasswords []Count          `json:"top_passwords"`
 	TopQueries   []Count          `json:"top_queries"`

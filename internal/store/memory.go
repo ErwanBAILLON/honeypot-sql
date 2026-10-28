@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -107,6 +108,7 @@ func (m *Memory) Stats(_ context.Context) (*Stats, error) {
 	defer m.mu.Unlock()
 	st := &Stats{ByProto: map[string]int64{}}
 	ips, users, pwds, queries := map[string]int64{}, map[string]int64{}, map[string]int64{}, map[string]int64{}
+	countries, asns := map[string]int64{}, map[string]int64{}
 	cut := time.Now().Add(-24 * time.Hour)
 	for _, s := range m.sessions {
 		st.Total++
@@ -115,6 +117,12 @@ func (m *Memory) Stats(_ context.Context) (*Stats, error) {
 			st.Last24h++
 		}
 		ips[s.RemoteIP]++
+		if s.Country != "" {
+			countries[s.Country]++
+		}
+		if s.ASN != 0 {
+			asns[fmt.Sprintf("AS%d %s", s.ASN, s.ASOrg)]++
+		}
 		if s.Username != "" || s.PasswordSeen != "" {
 			st.WithAuth++
 			users[s.Username]++
@@ -129,6 +137,8 @@ func (m *Memory) Stats(_ context.Context) (*Stats, error) {
 		}
 	}
 	st.TopIPs = topN(ips, 10)
+	st.TopCountries = topN(countries, 10)
+	st.TopASNs = topN(asns, 10)
 	st.TopUsernames = topN(users, 10)
 	st.TopPasswords = topN(pwds, 10)
 	st.TopQueries = topN(queries, 15)

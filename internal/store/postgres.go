@@ -29,10 +29,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   password_seen TEXT NOT NULL DEFAULT '',
   client_info   JSONB NOT NULL DEFAULT '{}'::jsonb,
   bytes_in      BIGINT NOT NULL DEFAULT 0,
-  bytes_out     BIGINT NOT NULL DEFAULT 0
+  bytes_out     BIGINT NOT NULL DEFAULT 0,
+  country       TEXT NOT NULL DEFAULT '',
+  asn           INT NOT NULL DEFAULT 0,
+  as_org        TEXT NOT NULL DEFAULT ''
 );
+-- Added after the first release; harmless on a fresh database, additive on an existing one.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS asn INT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS as_org TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS sessions_started_at_idx ON sessions (started_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_remote_ip_idx ON sessions (remote_ip);
+CREATE INDEX IF NOT EXISTS sessions_country_idx ON sessions (country);
 CREATE TABLE IF NOT EXISTS events (
   id         BIGSERIAL PRIMARY KEY,
   session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -67,9 +75,9 @@ func NewPostgres(ctx context.Context, url string) (*Postgres, error) {
 
 func (p *Postgres) StartSession(ctx context.Context, s *Session) error {
 	ci, _ := json.Marshal(nilToEmpty(s.ClientInfo))
-	return p.pool.QueryRow(ctx, `INSERT INTO sessions (proto, remote_ip, remote_port, started_at, username, database, password_seen, client_info)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		s.Proto, s.RemoteIP, s.RemotePort, s.StartedAt, s.Username, s.Database, s.PasswordSeen, ci).Scan(&s.ID)
+	return p.pool.QueryRow(ctx, `INSERT INTO sessions (proto, remote_ip, remote_port, started_at, username, database, password_seen, client_info, country, asn, as_org)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		s.Proto, s.RemoteIP, s.RemotePort, s.StartedAt, s.Username, s.Database, s.PasswordSeen, ci, s.Country, s.ASN, s.ASOrg).Scan(&s.ID)
 }
 
 func (p *Postgres) UpdateSession(ctx context.Context, s *Session) error {
@@ -88,12 +96,12 @@ func (p *Postgres) AddEvent(ctx context.Context, e *Event) error {
 		e.SessionID, e.TS, e.Kind, pl).Scan(&e.ID)
 }
 
-const sessionCols = `id, proto, host(remote_ip), remote_port, started_at, ended_at, username, database, password_seen, client_info, bytes_in, bytes_out`
+const sessionCols = `id, proto, host(remote_ip), remote_port, started_at, ended_at, username, database, password_seen, client_info, bytes_in, bytes_out, country, asn, as_org`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
 	var ci []byte
-	if err := row.Scan(&s.ID, &s.Proto, &s.RemoteIP, &s.RemotePort, &s.StartedAt, &s.EndedAt, &s.Username, &s.Database, &s.PasswordSeen, &ci, &s.BytesIn, &s.BytesOut); err != nil {
+	if err := row.Scan(&s.ID, &s.Proto, &s.RemoteIP, &s.RemotePort, &s.StartedAt, &s.EndedAt, &s.Username, &s.Database, &s.PasswordSeen, &ci, &s.BytesIn, &s.BytesOut, &s.Country, &s.ASN, &s.ASOrg); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal(ci, &s.ClientInfo)
@@ -168,6 +176,14 @@ func (p *Postgres) Stats(ctx context.Context) (*Stats, error) {
 	rows.Close()
 	var qerr error
 	st.TopIPs, qerr = p.counts(ctx, `SELECT host(remote_ip), count(*) FROM sessions GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10`)
+	if qerr != nil {
+		return nil, qerr
+	}
+	st.TopCountries, qerr = p.counts(ctx, `SELECT country, count(*) FROM sessions WHERE country <> '' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10`)
+	if qerr != nil {
+		return nil, qerr
+	}
+	st.TopASNs, qerr = p.counts(ctx, `SELECT 'AS' || asn || ' ' || max(as_org), count(*) FROM sessions WHERE asn <> 0 GROUP BY asn ORDER BY 2 DESC, 1 LIMIT 10`)
 	if qerr != nil {
 		return nil, qerr
 	}

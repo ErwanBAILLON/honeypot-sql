@@ -40,6 +40,8 @@ code{white-space:pre-wrap;word-break:break-all}
   </div>
   <div class="cols">
     <section><h2>Top IP</h2><table>{{range .Stats.TopIPs}}<tr><td>{{.Value}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucune</td></tr>{{end}}</table></section>
+    <section><h2>Top pays</h2><table>{{range .Stats.TopCountries}}<tr><td>{{.Value}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucun (ip2asn désactivé ?)</td></tr>{{end}}</table></section>
+    <section><h2>Top réseaux (AS)</h2><table>{{range .Stats.TopASNs}}<tr><td>{{short .Value}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucun</td></tr>{{end}}</table></section>
     <section><h2>Top utilisateurs</h2><table>{{range .Stats.TopUsernames}}<tr><td>{{.Value}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucun</td></tr>{{end}}</table></section>
     <section><h2>Top mots de passe</h2><table>{{range .Stats.TopPasswords}}<tr><td class="pw">{{.Value}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucun</td></tr>{{end}}</table></section>
     <section><h2>Requêtes vues</h2><table>{{range .Stats.TopQueries}}<tr><td><code>{{short .Value}}</code></td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">aucune</td></tr>{{end}}</table></section>
@@ -47,12 +49,13 @@ code{white-space:pre-wrap;word-break:break-all}
   <section>
     <h2>Dernières sessions</h2>
     <table>
-      <tr><th>#</th><th>proto</th><th>ip</th><th>début</th><th>durée</th><th>user</th><th>db</th><th>mot de passe</th><th>client</th><th>in/out</th></tr>
+      <tr><th>#</th><th>proto</th><th>ip</th><th>origine</th><th>début</th><th>durée</th><th>user</th><th>db</th><th>mot de passe</th><th>client</th><th>in/out</th></tr>
       {{range .Sessions}}
       <tr>
         <td><a href="/sessions/{{.ID}}">{{.ID}}</a></td>
         <td><span class="tag {{.Proto}}">{{.Proto}}</span></td>
         <td>{{.RemoteIP}}:{{.RemotePort}}</td>
+        <td class="muted" title="{{.ASOrg}}">{{with .Country}}{{.}}{{end}}{{if .ASN}} AS{{.ASN}}{{end}}</td>
         <td title="{{fmtTime .StartedAt}}">il y a {{ago .StartedAt}}</td>
         <td>{{dur .}}</td>
         <td>{{.Username}}</td>
@@ -61,7 +64,7 @@ code{white-space:pre-wrap;word-break:break-all}
         <td class="muted">{{with .ClientInfo}}{{with index . "application_name"}}{{.}}{{end}}{{with index . "connect_attrs"}}{{with index . "_client_name"}}{{.}}{{end}} {{with index . "_client_version"}}{{.}}{{end}}{{end}}{{with index . "auth_plugin"}} {{.}}{{end}}{{end}}</td>
         <td class="n">{{.BytesIn}}/{{.BytesOut}}</td>
       </tr>
-      {{else}}<tr><td colspan="10" class="muted">aucune session pour l'instant</td></tr>{{end}}
+      {{else}}<tr><td colspan="11" class="muted">aucune session pour l'instant</td></tr>{{end}}
     </table>
   </section>
 </main>

@@ -80,6 +80,15 @@ env:
   # cleartext records the password as typed; md5 only records a hash.
   HONEYPOT_PG_AUTH: cleartext
   HONEYPOT_MAX_CONNS: "500"
+  # Tarpit: delay before each reply to keep attackers engaged (0 = off).
+  # Non-zero makes each session hold its connection slot longer, so it trades
+  # capacity (HONEYPOT_MAX_CONNS) for stickiness. Capped by the session max.
+  HONEYPOT_TARPIT: "0"
+  # Offline country/ASN attribution from an ip2asn table (iptoasn.com, public
+  # domain). Empty = off. The file must exist in the container at this path
+  # (bake it into the image or mount it read-only); the honeypot never fetches
+  # it at runtime. See the README "Attribution" section.
+  HONEYPOT_IP2ASN: ""
 
 # Vault entry (via ESO): DATABASE_URL, ADMIN_USER, ADMIN_PASSWORD, optional HONEYPOT_PASSWORDS.
 vault:

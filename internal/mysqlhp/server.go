@@ -154,6 +154,7 @@ func (s *Server) commandLoop(ctx context.Context, c *hpcore.Session, resp *Hands
 			_ = WritePacket(c, 1, ErrPacket(1835, "HY000", "Malformed communication packet."))
 			return
 		}
+		c.Stall() // tarpit: hold the client between its command and our reply (no-op when disabled)
 		cmd, arg := payload[0], payload[1:]
 		switch cmd {
 		case comQuit:

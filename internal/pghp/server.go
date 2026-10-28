@@ -158,6 +158,7 @@ func (s *Server) queryLoop(ctx context.Context, c *hpcore.Session, env fakedb.En
 		if err != nil {
 			return
 		}
+		c.Stall() // tarpit: hold the client between its message and our reply (no-op when disabled)
 		if inError && m.Type != 'S' && m.Type != 'X' {
 			continue
 		}

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ErwanBAILLON/honeypot-sql/internal/geoip"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/hplog"
 	"github.com/ErwanBAILLON/honeypot-sql/internal/store"
 )
@@ -26,6 +27,14 @@ type Limits struct {
 	MaxQueries   int           // queries answered before closing (default 200)
 	MaxPacket    int           // largest client packet accepted (default 1 MiB)
 	PasswordTrim int           // password_seen stored length (default 128)
+
+	// Tarpit, if > 0, is the delay a handler adds before each response (Stall),
+	// to keep the attacker engaged on this honeypot and waste their time. It
+	// never opens anything toward the attacker; it only slows our own replies,
+	// and SessionMax still caps the whole session. 0 disables it (default).
+	Tarpit time.Duration
+	// Geo attributes the source IP to an AS and country, offline. nil = off.
+	Geo *geoip.DB
 }
 
 func (l *Limits) defaults() {
@@ -91,6 +100,34 @@ func (s *Session) ReadFull(p []byte) error {
 	return err
 }
 
+// Stall pauses for the tarpit delay (plus up to 50% jitter) before a response,
+// so a bot stays connected to us longer. It returns at once when the tarpit is
+// off, and wakes early when the session context ends, so SessionMax and
+// shutdown always win: the delay can only make a session shorter than its cap,
+// never longer.
+func (s *Session) Stall() {
+	d := s.Limits.Tarpit
+	if d <= 0 {
+		return
+	}
+	d += time.Duration(jitter(int64(d / 2)))
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-s.ctx.Done():
+	}
+}
+
+// jitter returns a non-negative pseudo-random value below n, cheap and
+// non-cryptographic (timing noise only).
+func jitter(n int64) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return time.Now().UnixNano() % n
+}
+
 // Event records a session event (DB + nothing else).
 func (s *Session) Event(kind string, payload map[string]any) {
 	e := &store.Event{SessionID: s.Rec.ID, TS: time.Now(), Kind: kind, Payload: BoundPayload(payload, EventMaxJSON)}
@@ -134,11 +171,15 @@ func (s *Session) Credentials(user, database, password string, extra map[string]
 		payload[k] = v
 	}
 	s.Event("auth", payload)
-	hplog.Emit("sql_honeypot_auth", map[string]any{
+	line := map[string]any{
 		"proto": s.Rec.Proto, "remote_ip": s.Rec.RemoteIP, "remote_port": s.Rec.RemotePort,
 		"session_id": s.Rec.ID, "username": s.Rec.Username, "database": s.Rec.Database,
 		"password_seen": s.Rec.PasswordSeen,
-	})
+	}
+	if s.Rec.Country != "" {
+		line["country"], line["asn"], line["as_org"] = s.Rec.Country, s.Rec.ASN, s.Rec.ASOrg
+	}
+	hplog.Emit("sql_honeypot_auth", line)
 }
 
 // ClientInfo merges non-credential facts (capabilities, versions, parameters).
@@ -157,6 +198,14 @@ func trim(s string, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// mergeInto copies the non-empty src entries into dst and returns dst.
+func mergeInto(dst, src map[string]any) map[string]any {
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // Serve accepts on ln until ctx is done and runs h for each client.
@@ -210,14 +259,19 @@ func handleConn(parent context.Context, c net.Conn, h Handler, st store.Store, l
 	port, _ := strconv.Atoi(portStr)
 	s := &Session{Conn: c, Store: st, Limits: lim, ctx: ctx}
 	s.Rec = store.Session{Proto: h.Proto(), RemoteIP: ip, RemotePort: port, StartedAt: time.Now(), ClientInfo: map[string]any{}}
+	geo := map[string]any{}
+	if rec, ok := lim.Geo.Lookup(ip); ok {
+		s.Rec.Country, s.Rec.ASN, s.Rec.ASOrg = rec.Country, int(rec.ASN), trim(rec.Org, 128)
+		geo = map[string]any{"country": rec.Country, "asn": rec.ASN, "as_org": s.Rec.ASOrg}
+	}
 	if err := st.StartSession(ctx, &s.Rec); err != nil {
 		log.Printf("store: start session: %v", err)
 	}
 	hplog.Sessions.Inc(h.Proto())
-	s.Event("connect", map[string]any{"local_addr": c.LocalAddr().String()})
-	hplog.Emit("sql_honeypot_touch", map[string]any{
+	s.Event("connect", mergeInto(map[string]any{"local_addr": c.LocalAddr().String()}, geo))
+	hplog.Emit("sql_honeypot_touch", mergeInto(map[string]any{
 		"proto": h.Proto(), "remote_ip": ip, "remote_port": port, "session_id": s.Rec.ID,
-	})
+	}, geo))
 	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
