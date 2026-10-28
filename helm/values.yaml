@@ -89,15 +89,33 @@ env:
   # honeypot only reads the local file, never the network. Set empty to turn
   # attribution off. See the README "Attribution" section.
   HONEYPOT_IP2ASN: "/ip2asn.tsv.gz"
-  # Canary tokens planted in the fake data to trace where "stolen" data goes.
-  # "1" turns planting on (auto-on when a beacon is set). The beacon is an
-  # unauthenticated HTTP listener that must be reachable by whatever loads the
-  # planted URL, so exposing it is a deliberate choice: these ship off, and no
-  # ingress/listener is wired until you decide where the beacon lives. See the
-  # README "Canary tokens" section.
-  HONEYPOT_CANARY: ""
-  HONEYPOT_BEACON_ADDR: ""
-  HONEYPOT_BEACON_URL: ""
+  # Canary tokens (HONEYPOT_CANARY / HONEYPOT_BEACON_*) are driven by the
+  # `canary` and `beacon` blocks below, not set here.
+
+# Canary tokens planted in the fake data to trace where "stolen" data goes.
+# Credential replay (a planted login seen again on our listeners) needs only
+# this; the HTTP beacon below additionally catches a planted URL being loaded.
+canary:
+  enabled: false
+
+# The beacon is the "black box": an unauthenticated HTTP listener that only
+# receives pings. Reaching it means a public, unauthenticated endpoint, so it
+# ships OFF and nothing is exposed until you turn it on and pick a host. When
+# enabled it also forces canary planting on.
+beacon:
+  enabled: false
+  port: 8081
+  # Hostname woven into the planted URLs (https://<host>/t/<token>). It must
+  # resolve to where the beacon is reachable. For the data to be traced when it
+  # leaves the LAN, this host has to be public (e.g. via the Cloudflare tunnel),
+  # which is the deliberate exposure step. Empty = plant no URL tokens.
+  host: ""
+  ingress:
+    # Route <host> to the beacon through Traefik (websecure). Keep off to wire
+    # exposure yourself (tunnel, another proxy, a NodePort...).
+    enabled: false
+    tls: true
+    certResolver: letsencrypt
 
 # Vault entry (via ESO): DATABASE_URL, ADMIN_USER, ADMIN_PASSWORD, optional HONEYPOT_PASSWORDS.
 vault:

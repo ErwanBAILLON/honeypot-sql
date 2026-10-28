@@ -59,3 +59,33 @@ spec:
     scheme: https
     permanent: true
 {{- end }}
+{{- if and .Values.beacon.enabled .Values.beacon.ingress.enabled .Values.beacon.host }}
+---
+# Canary beacon: unauthenticated by design (it must be reachable by whatever
+# loads a planted URL). Rate-limited, no basic auth. Make <host> public (e.g.
+# Cloudflare tunnel) only if you want the data traced once it leaves the LAN.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "honeypot-sql.fullname" . }}-beacon
+  labels:
+    {{- include "honeypot-sql.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.beacon.host }}`)
+      kind: Rule
+      middlewares:
+        - name: ratelimit-public
+          namespace: network
+      services:
+        - name: {{ include "honeypot-sql.fullname" . }}
+          port: {{ .Values.beacon.port }}
+  {{- if .Values.beacon.ingress.tls }}
+  tls:
+    certResolver: {{ .Values.beacon.ingress.certResolver }}
+    domains:
+      - main: {{ .Values.beacon.host | quote }}
+  {{- end }}
+{{- end }}

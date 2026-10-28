@@ -30,6 +30,16 @@ spec:
           port: {{ .Values.service.honeypot.mysqlPort }}
         - protocol: TCP
           port: {{ .Values.service.honeypot.pgPort }}
+    {{- if .Values.beacon.enabled }}
+    # Canary beacon: reached through Traefik (ns network).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: network
+      ports:
+        - protocol: TCP
+          port: {{ .Values.beacon.port }}
+    {{- end }}
   egress:
     - to:
         - namespaceSelector: {}

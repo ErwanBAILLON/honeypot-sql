@@ -22,6 +22,6 @@ FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/honeypot-sql /honeypot-sql
 COPY --from=build /out/ip2asn.tsv.gz /ip2asn.tsv.gz
 USER nonroot:nonroot
-EXPOSE 3306 5432 8080
+EXPOSE 3306 5432 8080 8081
 ENTRYPOINT ["/honeypot-sql"]
 CMD ["serve"]

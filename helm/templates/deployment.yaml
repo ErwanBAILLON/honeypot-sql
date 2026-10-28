@@ -48,10 +48,27 @@ spec:
             - name: postgres
               containerPort: {{ .Values.service.honeypot.pgPort }}
               protocol: TCP
+            {{- if .Values.beacon.enabled }}
+            - name: beacon
+              containerPort: {{ .Values.beacon.port }}
+              protocol: TCP
+            {{- end }}
           env:
             {{- range $k, $v := .Values.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if or .Values.canary.enabled .Values.beacon.enabled }}
+            - name: HONEYPOT_CANARY
+              value: "1"
+            {{- end }}
+            {{- if .Values.beacon.enabled }}
+            - name: HONEYPOT_BEACON_ADDR
+              value: ":{{ .Values.beacon.port }}"
+            {{- if .Values.beacon.host }}
+            - name: HONEYPOT_BEACON_URL
+              value: "https://{{ .Values.beacon.host }}/t"
+            {{- end }}
             {{- end }}
           # DATABASE_URL, ADMIN_USER, ADMIN_PASSWORD (+ optional HONEYPOT_PASSWORDS) from Vault.
           envFrom:

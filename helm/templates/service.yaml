@@ -11,6 +11,12 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- if .Values.beacon.enabled }}
+    - port: {{ .Values.beacon.port }}
+      targetPort: beacon
+      protocol: TCP
+      name: beacon
+    {{- end }}
   selector:
     {{- include "honeypot-sql.selectorLabels" . | nindent 4 }}
 ---
